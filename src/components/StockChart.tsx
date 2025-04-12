@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, BarChart, Bar
+  Tooltip, Legend, ResponsiveContainer, BarChart, Bar, ComposedChart
 } from 'recharts';
 import { LineChartIcon, RefreshCw, Search, CandlestickChart } from 'lucide-react';
 import TimeframeSelector from './TimeframeSelector';
@@ -25,6 +25,7 @@ const StockChart = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [timeframe, setTimeframe] = useState('1d');
   const [chartType, setChartType] = useState<'line' | 'candlestick'>('line');
+  const [previousClosePrice, setPreviousClosePrice] = useState<number | null>(null);
   const suggestionRef = React.useRef<HTMLDivElement>(null);
 
   // Extended timeframe options
@@ -120,6 +121,10 @@ const StockChart = () => {
       const result = data.chart.result[0];
       const quotes = result.indicators.quote[0];
       const timestamps = result.timestamp;
+      
+      // Get previous close from meta data
+      const previousClose = result.meta.previousClose;
+      setPreviousClosePrice(previousClose);
 
       // Format data for line chart
       const formattedLineData = timestamps.map((timestamp: number, i: number) => {
@@ -186,14 +191,18 @@ const StockChart = () => {
     fetchRealStockData(stockSymbol);
   };
 
-  // Calculate current profit/loss
+  // Calculate current profit/loss using previous day's close price
   const calculateProfitLoss = () => {
-    if (stockData.length < 2) return { value: 0, percentage: 0 };
+    if (stockData.length === 0) return { value: 0, percentage: 0 };
     
-    const firstPrice = stockData[0].price;
+    // Get the current price
     const currentPrice = stockData[stockData.length - 1].price;
-    const priceDiff = currentPrice - firstPrice;
-    const percentageDiff = (priceDiff / firstPrice) * 100;
+    
+    // Use previousClose from Yahoo Finance API result
+    const previousClose = previousClosePrice || stockData[0].price;
+    
+    const priceDiff = currentPrice - previousClose;
+    const percentageDiff = (priceDiff / previousClose) * 100;
     
     return {
       value: formatPrice(priceDiff),
@@ -371,71 +380,101 @@ const StockChart = () => {
         )}
         
         <ResponsiveContainer width="100%" height="100%">
-          {chartType === 'line' ? (
-            <LineChart data={stockData}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-              <XAxis
-                dataKey="timestamp"
-                tickFormatter={formatXAxisTick}
-                minTickGap={20}
-              />
-              <YAxis
-                domain={['auto', 'auto']}
-                tickFormatter={(value) => `₹${value}`}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <Line
-                type="monotone"
-                dataKey="price"
-                stroke="#10b981"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4 }}
-              />
-            </LineChart>
-          ) : (
-            <BarChart data={candleData} barSize={8}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-              <XAxis
-                dataKey="timestamp"
-                tickFormatter={formatXAxisTick}
-                minTickGap={20}
-              />
-              <YAxis
-                domain={['auto', 'auto']}
-                tickFormatter={(value) => `₹${value}`}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar
-                dataKey="high"
-                fill="transparent"
-                shape={(props) => {
-                  const { x, y, width, height, payload } = props;
-                  const fill = payload.isIncreasing ? "#16a34a" : "#dc2626";
-                  
-                  return (
-                    <g>
-                      <line
-                        x1={x + width / 2}
-                        y1={y}
-                        x2={x + width / 2}
-                        y2={y + height}
-                        stroke={fill}
-                        strokeWidth={1}
-                      />
-                      <rect
-                        x={x}
-                        y={payload.open > payload.close ? y : y + height - (height * (payload.close - payload.open) / (payload.high - payload.low))}
-                        width={width}
-                        height={Math.abs(height * (payload.close - payload.open) / (payload.high - payload.low))}
-                        fill={fill}
-                      />
-                    </g>
-                  );
-                }}
-              />
-            </BarChart>
-          )}
+
+{chartType === 'line' ? (
+  <LineChart data={stockData}>
+    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+    <XAxis
+      dataKey="timestamp"
+      tickFormatter={formatXAxisTick}
+      minTickGap={20}
+    />
+    <YAxis
+      domain={['auto', 'auto']}
+      tickFormatter={(value) => `₹${value}`}
+    />
+    <Tooltip content={<CustomTooltip />} />
+    <Line
+      type="monotone"
+      dataKey="price"
+      stroke="#10b981"
+      strokeWidth={2}
+      dot={false}
+      activeDot={{ r: 4 }}
+    />
+  </LineChart>
+) : (
+  <ComposedChart data={candleData}>
+    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+    <XAxis
+      dataKey="timestamp"
+      tickFormatter={formatXAxisTick}
+      minTickGap={20}
+    />
+    <YAxis
+      domain={[
+        (dataMin: number) => Math.floor(dataMin * 0.995),
+        (dataMax: number) => Math.ceil(dataMax * 1.005)
+      ]}
+      tickFormatter={(value) => `₹${value}`}
+    />
+    <Tooltip content={<CustomTooltip />} />
+    <Bar
+      dataKey="high"
+      barSize={8}
+      shape={(props: any) => {
+        const { x, y, width, height, payload } = props;
+        const fill = payload.isIncreasing ? "#16a34a" : "#ef4444";
+        const stroke = fill;
+        
+        // Calculate positions for the candlestick elements
+        const wickX = x + width / 2;
+        const openY = payload.isIncreasing 
+          ? y + ((payload.high - payload.open) / (payload.high - payload.low)) * height
+          : y + ((payload.high - payload.open) / (payload.high - payload.low)) * height;
+        const closeY = payload.isIncreasing 
+          ? y + ((payload.high - payload.close) / (payload.high - payload.low)) * height
+          : y + ((payload.high - payload.close) / (payload.high - payload.low)) * height;
+        const bodyTop = Math.min(openY, closeY);
+        const bodyHeight = Math.abs(closeY - openY);
+        
+        return (
+          <g>
+            {/* Top wick (high to open/close) */}
+            <line
+              x1={wickX}
+              y1={y}
+              x2={wickX}
+              y2={bodyTop}
+              stroke={stroke}
+              strokeWidth={1}
+            />
+            
+            {/* Body (open to close) */}
+            <rect
+              x={x + 1}
+              y={bodyTop}
+              width={width - 2}
+              height={Math.max(bodyHeight, 1)}
+              fill={fill}
+              stroke={stroke}
+            />
+            
+            {/* Bottom wick (open/close to low) */}
+            <line
+              x1={wickX}
+              y1={bodyTop + bodyHeight}
+              x2={wickX}
+              y2={y + height}
+              stroke={stroke}
+              strokeWidth={1}
+            />
+          </g>
+        );
+      }}
+    />
+  </ComposedChart>
+)}
         </ResponsiveContainer>
       </div>
 
