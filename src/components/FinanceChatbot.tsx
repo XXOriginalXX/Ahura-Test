@@ -142,16 +142,21 @@ ${points.join('\n')}
           {
             parts: [
               { 
-                text: `You are a professional Indian stock market analyst. Analyze the following stock data in detail and provide:
-                
-1) Should one buy or sell this stock right now based on technical patterns? Be direct with your recommendation.
-2) If recommending to buy, suggest an ideal price point. If recommending to sell, suggest a target to exit.
-3) Identify specific chart patterns present (e.g., head and shoulders, double top, support/resistance levels)
-4) Key resistance levels (price points)
-5) Key support levels (price points)
+                text: `You are a professional Indian stock market analyst. Analyze the following stock data and provide a clear, concise analysis with the following format:
 
-Your analysis must be focused EXCLUSIVELY on the provided data. Do not make general statements about market sectors or talk about fundamentals.
+1. BUY/SELL RECOMMENDATION: Start with a clear "BUY" or "SELL" recommendation. This is the most important part.
+2. PRICE TARGET: For a BUY, provide an entry price range. For a SELL, provide an exit target.
+3. KEY LEVELS: Identify specific support and resistance price levels.
+4. PATTERNS: Identify any notable chart patterns (e.g., head and shoulders, double top, trend lines).
+5. RATIONALE: Very briefly explain your recommendation based on the technical analysis.
 
+IMPORTANT FORMATTING INSTRUCTIONS:
+- Do NOT use asterisks, markdown, or any special formatting
+- Keep your analysis concise (2-3 sentences per section)
+- Always start with a clear BUY or SELL recommendation
+- Focus only on the data provided, not on general market trends or fundamentals
+- If you don't have enough information for a section, SKIP IT completely - don't include placeholders
+- Use plain language a retail investor would understand
 
 Data to analyze:
 ${chartData}`
@@ -160,7 +165,7 @@ ${chartData}`
           }
         ],
         generationConfig: {
-          maxOutputTokens: 350,
+          maxOutputTokens: 450,
           temperature: 0.2
         }
       };
@@ -182,21 +187,76 @@ ${chartData}`
       
       const responseText = candidate.content.parts[0].text;
       
-      // Parse the response into structured data
-      const extractSection = (section: string) => {
-        const regex = new RegExp(`${section}:\\s*(.*?)(?=\\n\\w+:|$)`, 'is');
-        const match = responseText.match(regex);
-        return match ? match[1].trim() : `${section} information not available`;
+      // Process the response to create a clean, structured analysis
+      const cleanText = responseText.replace(/\*/g, ''); // Remove all asterisks
+      
+      // Extract the main sections
+      const extractSection = (sectionTitle: string) => {
+        // Create regex patterns to match different possible section formats
+        const patterns = [
+          new RegExp(`${sectionTitle}:\\s*(.*?)(?=\\n\\d+\\.|\\n[A-Z_]+:|$)`, 'is'),
+          new RegExp(`\\d+\\.\\s*${sectionTitle}:\\s*(.*?)(?=\\n\\d+\\.|\\n[A-Z_]+:|$)`, 'is'),
+          new RegExp(`\\d+\\.\\s*${sectionTitle}\\s*(.*?)(?=\\n\\d+\\.|\\n[A-Z_]+:|$)`, 'is'),
+        ];
+        
+        // Try each pattern
+        for (const pattern of patterns) {
+          const match = cleanText.match(pattern);
+          if (match && match[1]) {
+            return match[1].trim();
+          }
+        }
+        
+        return null; // Return null if no match is found
       };
       
-      const analysisResult = {
-        recommendation: extractSection('RECOMMENDATION'),
-        targetPrice: extractSection('TARGET PRICE'),
-        patterns: extractSection('PATTERNS'),
-        support: extractSection('SUPPORT'),
-        resistance: extractSection('RESISTANCE'),
+      // Extract the key sections
+      const recommendation = extractSection('BUY/SELL RECOMMENDATION') || 
+                            extractSection('RECOMMENDATION') || 
+                            extractSection('BUY') || 
+                            extractSection('SELL');
+      
+      const priceTarget = extractSection('PRICE TARGET') || 
+                         extractSection('TARGET') || 
+                         extractSection('PRICE');
+      
+      const keyLevels = extractSection('KEY LEVELS') || 
+                       extractSection('LEVELS');
+      
+      const patterns = extractSection('PATTERNS') || 
+                      extractSection('PATTERN');
+      
+      const rationale = extractSection('RATIONALE') || 
+                       extractSection('REASON') || 
+                       extractSection('ANALYSIS');
+      
+      // If we didn't get a recommendation, try to determine one from the text
+      let finalRecommendation = recommendation;
+      if (!finalRecommendation) {
+        if (cleanText.toLowerCase().includes('buy')) {
+          finalRecommendation = "BUY";
+        } else if (cleanText.toLowerCase().includes('sell')) {
+          finalRecommendation = "SELL";
+        } else {
+          finalRecommendation = "HOLD/NEUTRAL";
+        }
+      }
+      
+      // Create the analysis object with only the sections that have content
+      const analysisResult: Record<string, string> = {
         disclaimer: "This analysis is for educational purposes only and not financial advice. Past patterns don't guarantee future results."
       };
+      
+      if (finalRecommendation) analysisResult.recommendation = finalRecommendation;
+      if (priceTarget) analysisResult.priceTarget = priceTarget;
+      if (keyLevels) analysisResult.keyLevels = keyLevels;
+      if (patterns) analysisResult.patterns = patterns;
+      if (rationale) analysisResult.rationale = rationale;
+      
+      // Add the full response as a fallback if we couldn't parse it properly
+      if (!recommendation && !priceTarget && !keyLevels && !patterns && !rationale) {
+        analysisResult.fullResponse = cleanText;
+      }
       
       // Send analysis to the user
       setMessages(prev => [...prev, { 
@@ -445,11 +505,48 @@ I'll provide information specifically about the stock chart you're currently vie
     }
   };
 
-  // Render formatted analysis content
+  // Render formatted analysis content with improved section labeling
   const renderAnalysisContent = (content: any) => {
     if (typeof content === 'string') {
       return content;
     }
+    
+    // If we have fullResponse from fallback, just show that
+    if (content.fullResponse) {
+      return (
+        <div className="space-y-3">
+          <div className="font-medium flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-blue-600" />
+            <span>Analysis for {selectedStock.replace('.NS', '')}:</span>
+          </div>
+          <div className="text-sm whitespace-pre-line">{content.fullResponse}</div>
+          
+          {content.disclaimer && (
+            <div className="text-xs text-yellow-600 mt-2 border-t pt-2 border-yellow-200">
+              {content.disclaimer}
+            </div>
+          )}
+        </div>
+      );
+    }
+    
+    // Map of section keys to their display titles
+    const sectionTitles = {
+      recommendation: "Recommendation",
+      priceTarget: "Price Target",
+      keyLevels: "Key Price Levels",
+      patterns: "Chart Patterns",
+      rationale: "Rationale"
+    };
+    
+    // Create an array of sections that have content
+    const sections = Object.keys(content)
+      .filter(key => key !== 'disclaimer' && content[key])
+      .map(key => ({
+        key,
+        title: sectionTitles[key as keyof typeof sectionTitles] || key,
+        content: content[key]
+      }));
     
     return (
       <div className="space-y-3">
@@ -458,30 +555,28 @@ I'll provide information specifically about the stock chart you're currently vie
           <span>Analysis for {selectedStock.replace('.NS', '')}:</span>
         </div>
         
-        <div className="font-medium mt-2">
-          <span>Recommendation:</span>
-        </div>
-        <p className="text-sm">{content.recommendation}</p>
-        
-        <div className="font-medium mt-2">
-          <span>Target Price:</span>
-        </div>
-        <p className="text-sm">{content.targetPrice}</p>
-        
-        {content.patterns && (
-          <>
-            <div className="font-medium mt-2">
-              <span>Pattern Identification:</span>
+        {/* Highlight the recommendation if available */}
+        {content.recommendation && (
+          <div className="bg-blue-50 p-2 rounded-md border border-blue-100">
+            <div className="font-medium">Recommendation:</div>
+            <div className="text-lg font-bold">
+              {content.recommendation}
             </div>
-            <p className="text-sm">{content.patterns}</p>
-          </>
+          </div>
         )}
         
-        <div className="text-sm">
-          <div className="font-medium mt-2">Key Levels:</div>
-          <div><strong>Support:</strong> {content.support}</div>
-          <div><strong>Resistance:</strong> {content.resistance}</div>
-        </div>
+        {/* Standard sections */}
+        {sections
+          .filter(section => section.key !== 'recommendation') // Skip recommendation as it's already shown
+          .map(section => (
+            <div key={section.key} className="space-y-1">
+              <div className="font-medium">
+                {section.title}:
+              </div>
+              <p className="text-sm">{section.content}</p>
+            </div>
+          ))
+        }
         
         {content.disclaimer && (
           <div className="text-xs text-yellow-600 mt-2 border-t pt-2 border-yellow-200">
@@ -553,9 +648,7 @@ I'll provide information specifically about the stock chart you're currently vie
                       {typeof message.content === 'object' 
                         ? renderAnalysisContent(message.content) 
                         : typeof message.content === 'string'
-                          ? <div dangerouslySetInnerHTML={{ 
-                              __html: message.content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>') 
-                            }} />
+                          ? <div className="whitespace-pre-line">{message.content}</div>
                           : message.content}
                       
                       {message.hasScreenshot && screenshotImageRef.current && (
