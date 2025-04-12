@@ -3,7 +3,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, BarChart, Bar, ComposedChart
 } from 'recharts';
-import { LineChartIcon, RefreshCw, Search, CandlestickChart } from 'lucide-react';
+import { LineChartIcon, RefreshCw, Search, CandlestickChart, ExternalLink, X } from 'lucide-react';
 import TimeframeSelector from './TimeframeSelector';
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import FinanceChatbot from './FinanceChatbot';
@@ -26,7 +26,27 @@ const StockChart = () => {
   const [timeframe, setTimeframe] = useState('1d');
   const [chartType, setChartType] = useState<'line' | 'candlestick'>('line');
   const [previousClosePrice, setPreviousClosePrice] = useState<number | null>(null);
+  const [showExternalFrame, setShowExternalFrame] = useState<string | null>(null);
   const suggestionRef = React.useRef<HTMLDivElement>(null);
+
+  // External platforms for browsing
+  const externalPlatforms = [
+    { 
+      id: 'tradingview', 
+      name: 'TradingView', 
+      url: (stock: string) => `https://www.tradingview.com/chart/?symbol=NSE:${stock.replace('.NS', '')}` 
+    },
+    { 
+      id: 'groww', 
+      name: 'Groww', 
+      url: (stock: string) => `https://groww.in/charts/stocks/${stock.replace('.NS', '')}` 
+    },
+    { 
+      id: 'zerodha', 
+      name: 'Zerodha', 
+      url: (stock: string) => `https://kite.zerodha.com/chart/ext/ciq/NSE/${stock.replace('.NS', '')}` 
+    }
+  ];
 
   // Extended timeframe options
   const timeframeOptions = [
@@ -191,6 +211,30 @@ const StockChart = () => {
     fetchRealStockData(stockSymbol);
   };
 
+  // Open external platform in iframe
+  const openExternalPlatform = (platformId: string) => {
+    setShowExternalFrame(platformId);
+  };
+
+  // Close external platform iframe
+  const closeExternalFrame = () => {
+    setShowExternalFrame(null);
+  };
+
+  // Get URL for external platform with bypass proxy
+  const getExternalPlatformUrl = () => {
+    if (!showExternalFrame) return '';
+    const platform = externalPlatforms.find(p => p.id === showExternalFrame);
+    if (!platform) return '';
+    
+    // Use a CORS proxy to try to bypass X-Frame-Options restrictions
+    // Note: This is not guaranteed to work for all sites and may have limitations
+    const proxyUrl = 'https://corsproxy.io/?';
+    const targetUrl = platform.url(selectedStock);
+    
+    return proxyUrl + encodeURIComponent(targetUrl);
+  };
+
   // Calculate current profit/loss using previous day's close price
   const calculateProfitLoss = () => {
     if (stockData.length === 0) return { value: 0, percentage: 0 };
@@ -339,7 +383,7 @@ const StockChart = () => {
         </div>
       </div>
 
-      {/* Controls */}
+      {/* Controls and External Platform Links */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
         <TimeframeSelector
           timeframe={timeframe}
@@ -371,112 +415,158 @@ const StockChart = () => {
         </div>
       </div>
 
-      {/* Chart */}
-      <div className="h-[400px] relative">
-        {loading && (
-          <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-10">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500" />
-          </div>
-        )}
-        
-        <ResponsiveContainer width="100%" height="100%">
-
-{chartType === 'line' ? (
-  <LineChart data={stockData}>
-    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-    <XAxis
-      dataKey="timestamp"
-      tickFormatter={formatXAxisTick}
-      minTickGap={20}
-    />
-    <YAxis
-      domain={['auto', 'auto']}
-      tickFormatter={(value) => `₹${value}`}
-    />
-    <Tooltip content={<CustomTooltip />} />
-    <Line
-      type="monotone"
-      dataKey="price"
-      stroke="#10b981"
-      strokeWidth={2}
-      dot={false}
-      activeDot={{ r: 4 }}
-    />
-  </LineChart>
-) : (
-  <ComposedChart data={candleData}>
-    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-    <XAxis
-      dataKey="timestamp"
-      tickFormatter={formatXAxisTick}
-      minTickGap={20}
-    />
-    <YAxis
-      domain={[
-        (dataMin: number) => Math.floor(dataMin * 0.995),
-        (dataMax: number) => Math.ceil(dataMax * 1.005)
-      ]}
-      tickFormatter={(value) => `₹${value}`}
-    />
-    <Tooltip content={<CustomTooltip />} />
-    <Bar
-      dataKey="high"
-      barSize={8}
-      shape={(props: any) => {
-        const { x, y, width, height, payload } = props;
-        const fill = payload.isIncreasing ? "#16a34a" : "#ef4444";
-        const stroke = fill;
-        
-        // Calculate positions for the candlestick elements
-        const wickX = x + width / 2;
-        const openY = payload.isIncreasing 
-          ? y + ((payload.high - payload.open) / (payload.high - payload.low)) * height
-          : y + ((payload.high - payload.open) / (payload.high - payload.low)) * height;
-        const closeY = payload.isIncreasing 
-          ? y + ((payload.high - payload.close) / (payload.high - payload.low)) * height
-          : y + ((payload.high - payload.close) / (payload.high - payload.low)) * height;
-        const bodyTop = Math.min(openY, closeY);
-        const bodyHeight = Math.abs(closeY - openY);
-        
-        return (
-          <g>
-            {/* Top wick (high to open/close) */}
-            <line
-              x1={wickX}
-              y1={y}
-              x2={wickX}
-              y2={bodyTop}
-              stroke={stroke}
-              strokeWidth={1}
-            />
-            
-            {/* Body (open to close) */}
-            <rect
-              x={x + 1}
-              y={bodyTop}
-              width={width - 2}
-              height={Math.max(bodyHeight, 1)}
-              fill={fill}
-              stroke={stroke}
-            />
-            
-            {/* Bottom wick (open/close to low) */}
-            <line
-              x1={wickX}
-              y1={bodyTop + bodyHeight}
-              x2={wickX}
-              y2={y + height}
-              stroke={stroke}
-              strokeWidth={1}
-            />
-          </g>
-        );
-      }}
-    />
-  </ComposedChart>
-)}
-        </ResponsiveContainer>
+      {/* External Platforms Section */}
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-gray-600 mr-1">Browse on:</span>
+        {externalPlatforms.map((platform) => (
+          <button
+            key={platform.id}
+            onClick={() => openExternalPlatform(platform.id)}
+            className="inline-flex items-center px-3 py-1 text-sm rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors"
+          >
+            {platform.name}
+            <ExternalLink className="h-3 w-3 ml-1" />
+          </button>
+        ))}
       </div>
+
+      {/* External Platform iFrame (when active) */}
+      {showExternalFrame ? (
+        <div className="mb-6 relative">
+          <div className="flex justify-between items-center mb-2 bg-gray-100 p-2 rounded-t-lg">
+            <div className="text-sm font-medium">
+              Viewing {selectedStock.replace('.NS', '')} on {externalPlatforms.find(p => p.id === showExternalFrame)?.name}
+            </div>
+            <button 
+              onClick={closeExternalFrame}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="relative w-full h-[600px] bg-gray-50 flex items-center justify-center border rounded-b-lg">
+            <iframe 
+              src={getExternalPlatformUrl()}
+              className="w-full h-full border-0"
+              title={`${selectedStock} on ${showExternalFrame}`}
+              sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+              referrerPolicy="no-referrer"
+            />
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-opacity-50 text-center p-4">
+              <p className="text-gray-600 bg-white p-4 rounded-lg shadow-lg max-w-lg">
+                Note: Some trading platforms may not display properly within this frame due to their security policies. 
+                If the frame appears blank, try refreshing or check your browser console for blocked content messages.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        // Regular Chart (when no external platform is showing)
+        <div className="h-[400px] relative">
+          {loading && (
+            <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-10">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-500" />
+            </div>
+          )}
+          
+          <ResponsiveContainer width="100%" height="100%">
+            {chartType === 'line' ? (
+              <LineChart data={stockData}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                <XAxis
+                  dataKey="timestamp"
+                  tickFormatter={formatXAxisTick}
+                  minTickGap={20}
+                />
+                <YAxis
+                  domain={['auto', 'auto']}
+                  tickFormatter={(value) => `₹${value}`}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Line
+                  type="monotone"
+                  dataKey="price"
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              </LineChart>
+            ) : (
+              <ComposedChart data={candleData}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                <XAxis
+                  dataKey="timestamp"
+                  tickFormatter={formatXAxisTick}
+                  minTickGap={20}
+                />
+                <YAxis
+                  domain={[
+                    (dataMin: number) => Math.floor(dataMin * 0.995),
+                    (dataMax: number) => Math.ceil(dataMax * 1.005)
+                  ]}
+                  tickFormatter={(value) => `₹${value}`}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar
+                  dataKey="high"
+                  barSize={8}
+                  shape={(props: any) => {
+                    const { x, y, width, height, payload } = props;
+                    const fill = payload.isIncreasing ? "#16a34a" : "#ef4444";
+                    const stroke = fill;
+                    
+                    // Calculate positions for the candlestick elements
+                    const wickX = x + width / 2;
+                    const openY = payload.isIncreasing 
+                      ? y + ((payload.high - payload.open) / (payload.high - payload.low)) * height
+                      : y + ((payload.high - payload.open) / (payload.high - payload.low)) * height;
+                    const closeY = payload.isIncreasing 
+                      ? y + ((payload.high - payload.close) / (payload.high - payload.low)) * height
+                      : y + ((payload.high - payload.close) / (payload.high - payload.low)) * height;
+                    const bodyTop = Math.min(openY, closeY);
+                    const bodyHeight = Math.abs(closeY - openY);
+                    
+                    return (
+                      <g>
+                        {/* Top wick (high to open/close) */}
+                        <line
+                          x1={wickX}
+                          y1={y}
+                          x2={wickX}
+                          y2={bodyTop}
+                          stroke={stroke}
+                          strokeWidth={1}
+                        />
+                        
+                        {/* Body (open to close) */}
+                        <rect
+                          x={x + 1}
+                          y={bodyTop}
+                          width={width - 2}
+                          height={Math.max(bodyHeight, 1)}
+                          fill={fill}
+                          stroke={stroke}
+                        />
+                        
+                        {/* Bottom wick (open/close to low) */}
+                        <line
+                          x1={wickX}
+                          y1={bodyTop + bodyHeight}
+                          x2={wickX}
+                          y2={y + height}
+                          stroke={stroke}
+                          strokeWidth={1}
+                        />
+                      </g>
+                    );
+                  }}
+                />
+              </ComposedChart>
+            )}
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {error && (
         <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">

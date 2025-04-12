@@ -149,7 +149,7 @@ ${points.join('\n')}
 3) Identify specific chart patterns present (e.g., head and shoulders, double top, support/resistance levels)
 4) Key resistance levels (price points)
 5) Key support levels (price points)
-                
+
 Your analysis must be focused EXCLUSIVELY on the provided data. Do not make general statements about market sectors or talk about fundamentals.
 
 
